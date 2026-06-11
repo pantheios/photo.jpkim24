@@ -1,0 +1,120 @@
+// bebememo 대체 — 가족 사진 공유 서비스
+// 자세한 내용: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// 연동된 iCloud 공유앨범 (공개 웹사이트 링크의 토큰)
+model AlbumSource {
+  id         String    @id @default(cuid())
+  token      String    @unique
+  name       String?
+  lastSyncAt DateTime?
+  createdAt  DateTime  @default(now())
+}
+
+// 가족 구성원
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         String   @default("member") // "admin" | "member"
+  avatarUrl    String?
+  createdAt    DateTime @default(now())
+
+  posts       Post[]
+  comments    Comment[]
+  reactions   Reaction[]
+  invitesSent Invite[]  @relation("InviteCreator")
+  inviteUsed  Invite?   @relation("InviteUser")
+}
+
+// 초대코드 — 관리자가 발급, 가입 시 1회 사용
+model Invite {
+  id          String    @id @default(cuid())
+  code        String    @unique
+  createdById String
+  createdBy   User      @relation("InviteCreator", fields: [createdById], references: [id])
+  usedById    String?   @unique
+  usedBy      User?     @relation("InviteUser", fields: [usedById], references: [id])
+  expiresAt   DateTime?
+  createdAt   DateTime  @default(now())
+}
+
+// 아기 프로필 — 생일 기준으로 "생후 N일" 자동 표시
+model Child {
+  id        String   @id @default(cuid())
+  name      String
+  birthDate DateTime
+  avatarUrl String?
+  createdAt DateTime @default(now())
+}
+
+// 사진 묶음 글 (한 글에 여러 장)
+model Post {
+  id        String   @id @default(cuid())
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  caption   String?
+  takenAt   DateTime @default(now()) // 촬영일 (EXIF 또는 업로드 시각)
+  source    String   @default("upload") // "upload" | "icloud"
+  syncKey   String?  @unique // iCloud 동기화: "<sourceId>:<yyyy-mm-dd>" (촬영일별 묶음)
+  createdAt DateTime @default(now())
+
+  media     Media[]
+  comments  Comment[]
+  reactions Reaction[]
+
+  @@index([takenAt])
+}
+
+// 개별 사진/동영상 파일
+model Media {
+  id        String   @id @default(cuid())
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  type      String   @default("image") // "image" | "video"
+  path      String // 원본 상대경로 (uploads/...)
+  thumbPath String? // 썸네일 상대경로
+  width      Int?
+  height     Int?
+  order      Int      @default(0)
+  icloudGuid String?  @unique // iCloud 공유앨범 photoGuid (중복 임포트 방지)
+  createdAt  DateTime @default(now())
+
+  @@index([postId])
+}
+
+// 댓글
+model Comment {
+  id        String   @id @default(cuid())
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  body      String
+  createdAt DateTime @default(now())
+
+  @@index([postId])
+}
+
+// 이모지 반응 (사용자당 이모지 1개)
+model Reaction {
+  id        String   @id @default(cuid())
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emoji     String
+  createdAt DateTime @default(now())
+
+  @@unique([postId, userId, emoji])
+  @@index([postId])
+}

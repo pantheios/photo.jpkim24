@@ -1,0 +1,21 @@
+services:
+  album:
+    build: .
+    image: woorijip-album
+    container_name: woorijip-album
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # DB와 업로드는 /data 볼륨에 영구 저장
+      DATABASE_URL: "file:/data/app.db"
+      UPLOAD_DIR: "/data/uploads"
+      # 반드시 직접 바꾸세요: openssl rand -base64 32
+      SESSION_SECRET: "${SESSION_SECRET:?SESSION_SECRET 환경변수를 설정하세요}"
+      # iCloud 공유앨범 자동 동기화 간격(분). 끄려면 ICLOUD_SYNC_DISABLED=1
+      ICLOUD_SYNC_INTERVAL_MIN: "30"
+    volumes:
+      - album-data:/data
+
+volumes:
+  album-data:

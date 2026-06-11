@@ -32,6 +32,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -39,3 +40,18 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+/src/generated/prisma
+
+# 앱 데이터 (업로드 사진 + sqlite DB)
+/data
+dev.db
+dev.db-journal
+prisma/dev.db
+prisma/dev.db-journal
+
+# Claude Code 로컬 설정
+.claude/settings.local.json
+
+# Prisma 생성 클라이언트
+/src/generated
