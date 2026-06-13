@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.family.photo-sync</string>
+
+  <!-- 설치 시 sync.py의 실제 경로로 바꿔주세요 -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/YOUR_USERNAME/photo-album/scripts/mac-sync/sync.py</string>
+  </array>
+
+  <!-- 1시간마다 실행 -->
+  <key>StartInterval</key>
+  <integer>3600</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/photo-sync.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/photo-sync.err.log</string>
+
+  <!-- osxphotos가 PATH에 있도록 (pipx 기본 경로 포함) -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/YOUR_USERNAME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+</dict>
+</plist>

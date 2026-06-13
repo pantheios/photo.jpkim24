@@ -55,3 +55,7 @@ prisma/dev.db-journal
 
 # Prisma 생성 클라이언트
 /src/generated
+
+# Python 캐시 (맥 동기화 스크립트)
+__pycache__/
+*.pyc

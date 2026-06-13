@@ -10,7 +10,6 @@ import { MediaGallery } from "@/components/MediaGallery";
 import { ReactionBar } from "@/components/ReactionBar";
 import { CommentSection } from "@/components/CommentSection";
 import { DeletePostButton } from "@/components/DeletePostButton";
-import { Avatar } from "@/components/Avatar";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +26,10 @@ export default async function PostDetailPage({
     where: { id },
     include: {
       author: { select: { id: true, name: true } },
-      media: { orderBy: { order: "asc" } },
+      media: {
+        orderBy: [{ takenAt: { sort: "asc", nulls: "last" } }, { order: "asc" }],
+        include: { children: { select: { childId: true } } },
+      },
       reactions: { select: { emoji: true, userId: true } },
       comments: {
         orderBy: { createdAt: "asc" },
@@ -37,7 +39,7 @@ export default async function PostDetailPage({
   });
   if (!post) notFound();
 
-  const child = await prisma.child.findFirst({ orderBy: { createdAt: "desc" } });
+  const kids = await prisma.child.findMany({ orderBy: { birthDate: "asc" } });
   const { counts, mine } = reactionSummary(post.reactions, user.id);
   const canDelete = post.authorId === user.id || user.role === ROLES.ADMIN;
   const comments = post.comments.map((c) => ({
@@ -59,23 +61,32 @@ export default async function PostDetailPage({
       </header>
 
       <main className="mx-auto max-w-xl pb-16">
-        <div className="flex items-center gap-2.5 px-4 py-3">
-          <Avatar name={post.author.name} />
-          <div>
-            <div className="text-sm font-semibold">{post.author.name}</div>
-            <div className="text-xs text-muted">
-              {formatDateTime(post.takenAt)}
-              {child && (
-                <span className="ml-1.5 rounded-full bg-soft px-1.5 py-0.5 text-primary">
-                  {ageLabel(child.birthDate, post.takenAt)}
+        <div className="px-4 py-3">
+          <div className="text-base font-semibold">{formatDateTime(post.takenAt)}</div>
+          {kids.length > 0 && (
+            <div className="mt-1 flex flex-wrap gap-1 text-xs text-muted">
+              {kids.map((k) => (
+                <span
+                  key={k.id}
+                  className="rounded-full bg-soft px-1.5 py-0.5 text-primary"
+                >
+                  {kids.length > 1 ? `${k.name} ` : ""}
+                  {ageLabel(k.birthDate, post.takenAt)}
                 </span>
-              )}
+              ))}
             </div>
-          </div>
+          )}
         </div>
 
         <div className="overflow-hidden bg-surface sm:rounded-card sm:ring-1 sm:ring-line">
-          <MediaGallery media={post.media} size="full" />
+          <MediaGallery
+            media={post.media.map((m) => ({
+              ...m,
+              childIds: m.children.map((c) => c.childId),
+            }))}
+            editable={user.role === ROLES.ADMIN}
+            allKids={kids.map((k) => ({ id: k.id, name: k.name }))}
+          />
         </div>
 
         <div className="space-y-4 px-4 py-4">

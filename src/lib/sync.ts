@@ -70,7 +70,7 @@ async function importPhoto(
       width: processed.width,
       height: processed.height,
       order,
-      icloudGuid: photo.photoGuid,
+      externalId: photo.photoGuid,
     },
   });
 }
@@ -89,10 +89,10 @@ export async function syncICloud(): Promise<SyncResult> {
 
     // 이미 가져온 사진 제외
     const existing = await prisma.media.findMany({
-      where: { icloudGuid: { not: null } },
-      select: { icloudGuid: true },
+      where: { externalId: { not: null } },
+      select: { externalId: true },
     });
-    const seen = new Set(existing.map((m) => m.icloudGuid));
+    const seen = new Set(existing.map((m) => m.externalId));
     const fresh = stream.photos.filter((p) => !seen.has(p.photoGuid));
 
     let added = 0;

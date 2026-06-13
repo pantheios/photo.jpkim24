@@ -36,6 +36,6 @@ export async function middleware(req: NextRequest) {
 export const config = {
   // 인증 API와 정적 자원은 미들웨어 제외
   matcher: [
-    "/((?!api/auth|_next/static|_next/image|favicon.ico|manifest.webmanifest|icons|sw.js).*)",
+    "/((?!api/auth|api/ingest|_next/static|_next/image|favicon.ico|manifest.webmanifest|icons|sw.js).*)",
   ],
 };

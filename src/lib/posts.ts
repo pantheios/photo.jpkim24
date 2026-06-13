@@ -13,9 +13,12 @@ export function reactionSummary(
 }
 
 // 피드/상세에서 공통으로 쓰는 Prisma include
+// 사진은 촬영시각순 (촬영시각이 없는 파일은 뒤로, 업로드 순서로 보조 정렬)
 export const postInclude = {
   author: { select: { id: true, name: true, avatarUrl: true } },
-  media: { orderBy: { order: "asc" } },
+  media: {
+    orderBy: [{ takenAt: { sort: "asc", nulls: "last" } }, { order: "asc" }],
+  },
   reactions: { select: { emoji: true, userId: true } },
   _count: { select: { comments: true } },
 } as const;

@@ -16,14 +16,24 @@ type AlbumSource = {
   lastSyncAt: string | null;
 };
 
+type IngestTokenInfo = {
+  id: string;
+  name: string;
+  lastUsedAt: string | null;
+  createdAt: string;
+};
+
+type ChildInfo = { id: string; name: string; birthDate: string };
+
 export function AdminPanel({
-  initialChild,
+  initialChildren,
 }: {
-  initialChild: { name: string; birthDate: string } | null;
+  initialChildren: ChildInfo[];
 }) {
-  // 아기 프로필
-  const [name, setName] = useState(initialChild?.name ?? "");
-  const [birthDate, setBirthDate] = useState(initialChild?.birthDate.slice(0, 10) ?? "");
+  // 아이 프로필 (여러 명)
+  const [kids, setKids] = useState<ChildInfo[]>(initialChildren);
+  const [name, setName] = useState("");
+  const [birthDate, setBirthDate] = useState("");
   const [childMsg, setChildMsg] = useState("");
   const [savingChild, setSavingChild] = useState(false);
 
@@ -38,6 +48,12 @@ export function AdminPanel({
   const [icloudMsg, setIcloudMsg] = useState("");
   const [icloudBusy, setIcloudBusy] = useState(false);
 
+  // 맥 동기화 토큰
+  const [tokens, setTokens] = useState<IngestTokenInfo[]>([]);
+  const [newToken, setNewToken] = useState<{ name: string; value: string } | null>(null);
+  const [tokenName, setTokenName] = useState("");
+  const [tokenBusy, setTokenBusy] = useState(false);
+
   useEffect(() => {
     fetch("/api/invites")
       .then((r) => r.json())
@@ -47,7 +63,42 @@ export function AdminPanel({
       .then((r) => r.json())
       .then((d) => setSource(d.source ?? null))
       .catch(() => {});
+    fetch("/api/ingest-tokens")
+      .then((r) => r.json())
+      .then((d) => setTokens(d.tokens ?? []))
+      .catch(() => {});
   }, []);
+
+  async function createToken(e: React.FormEvent) {
+    e.preventDefault();
+    setTokenBusy(true);
+    try {
+      const res = await fetch("/api/ingest-tokens", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: tokenName }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setNewToken({ name: data.token.name, value: data.token.value });
+        setTokenName("");
+        const list = await fetch("/api/ingest-tokens").then((r) => r.json());
+        setTokens(list.tokens ?? []);
+      }
+    } finally {
+      setTokenBusy(false);
+    }
+  }
+
+  async function revokeToken(id: string) {
+    if (!confirm("이 토큰을 폐기할까요? 해당 맥에서 더 이상 업로드할 수 없게 됩니다.")) return;
+    await fetch("/api/ingest-tokens", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    setTokens((t) => t.filter((x) => x.id !== id));
+  }
 
   async function connectAlbum(e: React.FormEvent) {
     e.preventDefault();
@@ -99,18 +150,39 @@ export function AdminPanel({
     setIcloudMsg("연동을 해제했어요.");
   }
 
-  async function saveChild(e: React.FormEvent) {
+  async function addChild(e: React.FormEvent) {
     e.preventDefault();
     setSavingChild(true);
     setChildMsg("");
     const res = await fetch("/api/child", {
-      method: "PUT",
+      method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, birthDate }),
     });
     const data = await res.json();
     setSavingChild(false);
-    setChildMsg(res.ok ? "저장했어요 ✓" : data.error || "저장 실패");
+    if (res.ok) {
+      setKids((k) =>
+        [...k, data.child].sort(
+          (a, b) => new Date(a.birthDate).getTime() - new Date(b.birthDate).getTime(),
+        ),
+      );
+      setName("");
+      setBirthDate("");
+      setChildMsg("추가했어요 ✓");
+    } else {
+      setChildMsg(data.error || "저장 실패");
+    }
+  }
+
+  async function removeChild(id: string, childName: string) {
+    if (!confirm(`${childName} 프로필을 삭제할까요? 사진은 그대로 남습니다.`)) return;
+    await fetch("/api/child", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    setKids((k) => k.filter((c) => c.id !== id));
   }
 
   async function createInvite() {
@@ -138,44 +210,134 @@ export function AdminPanel({
 
   return (
     <div className="space-y-8">
-      {/* 아기 프로필 */}
+      {/* 아이 프로필 */}
       <section className="rounded-card bg-surface p-5 shadow-sm ring-1 ring-line">
-        <h2 className="mb-4 font-bold">👶 아기 프로필</h2>
-        <form onSubmit={saveChild} className="space-y-3">
-          <div>
-            <label className="mb-1 block text-sm font-medium">이름</label>
+        <h2 className="mb-4 font-bold">👶 아이 프로필</h2>
+
+        {kids.length > 0 && (
+          <ul className="mb-4 space-y-1.5">
+            {kids.map((c) => (
+              <li
+                key={c.id}
+                className="flex items-center justify-between rounded-lg border border-line px-3 py-2"
+              >
+                <div>
+                  <span className="font-medium">{c.name}</span>
+                  <span className="ml-2 text-sm text-primary">
+                    {ageLabel(new Date(c.birthDate))}
+                  </span>
+                  <span className="ml-2 text-xs text-muted">
+                    {new Date(c.birthDate).toLocaleDateString("ko-KR")}
+                  </span>
+                </div>
+                <button
+                  onClick={() => removeChild(c.id, c.name)}
+                  className="text-xs text-muted hover:text-red-500"
+                >
+                  삭제
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <form onSubmit={addChild} className="space-y-3">
+          <div className="flex gap-2">
             <input
               required
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full rounded-lg border border-line bg-white px-3 py-2.5 outline-none focus:border-primary"
-              placeholder="아기 이름"
+              className="flex-1 rounded-lg border border-line bg-white px-3 py-2.5 outline-none focus:border-primary"
+              placeholder="아이 이름"
             />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium">생일</label>
             <input
               type="date"
               required
               value={birthDate}
               onChange={(e) => setBirthDate(e.target.value)}
-              className="w-full rounded-lg border border-line bg-white px-3 py-2.5 outline-none focus:border-primary"
+              className="rounded-lg border border-line bg-white px-3 py-2.5 outline-none focus:border-primary"
             />
-            {birthPreview && (
-              <p className="mt-1 text-sm text-primary">오늘 기준 {birthPreview}</p>
-            )}
           </div>
+          {birthPreview && (
+            <p className="text-sm text-primary">오늘 기준 {birthPreview}</p>
+          )}
           <div className="flex items-center gap-3">
             <button
               type="submit"
               disabled={savingChild}
               className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
             >
-              {savingChild ? "저장 중…" : "저장"}
+              {savingChild ? "추가 중…" : "+ 아이 추가"}
             </button>
             {childMsg && <span className="text-sm text-muted">{childMsg}</span>}
           </div>
         </form>
+      </section>
+
+      {/* 맥 동기화 (osxphotos) */}
+      <section className="rounded-card bg-surface p-5 shadow-sm ring-1 ring-line">
+        <h2 className="mb-2 font-bold">💻 맥 사진 동기화</h2>
+        <p className="mb-3 text-sm text-muted">
+          맥의 사진 앱에서 특정 인물 사진을 자동으로 올리는 에이전트용 토큰입니다.
+          설치 방법은 저장소의 <code className="rounded bg-soft px-1">scripts/mac-sync/README.md</code> 참고.
+        </p>
+
+        <form onSubmit={createToken} className="mb-3 flex gap-2">
+          <input
+            value={tokenName}
+            onChange={(e) => setTokenName(e.target.value)}
+            placeholder="토큰 이름 (예: 아빠 맥북)"
+            className="flex-1 rounded-lg border border-line bg-white px-3 py-2 text-sm outline-none focus:border-primary"
+          />
+          <button
+            type="submit"
+            disabled={tokenBusy}
+            className="shrink-0 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+          >
+            토큰 발급
+          </button>
+        </form>
+
+        {newToken && (
+          <div className="mb-3 rounded-lg border border-primary/40 bg-soft p-3">
+            <div className="mb-1 text-xs font-semibold text-primary">
+              ⚠️ 지금만 표시됩니다 — 복사해서 맥 설정 파일에 넣어주세요
+            </div>
+            <code className="block break-all text-xs">{newToken.value}</code>
+            <button
+              onClick={() => navigator.clipboard.writeText(newToken.value)}
+              className="mt-2 rounded border border-line px-2 py-1 text-xs"
+            >
+              복사
+            </button>
+          </div>
+        )}
+
+        {tokens.length > 0 && (
+          <ul className="space-y-1.5">
+            {tokens.map((t) => (
+              <li
+                key={t.id}
+                className="flex items-center justify-between rounded-lg border border-line px-3 py-2 text-sm"
+              >
+                <div>
+                  <span className="font-medium">{t.name}</span>
+                  <span className="ml-2 text-xs text-muted">
+                    {t.lastUsedAt
+                      ? `마지막 사용: ${new Date(t.lastUsedAt).toLocaleString("ko-KR")}`
+                      : "아직 사용 전"}
+                  </span>
+                </div>
+                <button
+                  onClick={() => revokeToken(t.id)}
+                  className="text-xs text-muted hover:text-red-500"
+                >
+                  폐기
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       {/* iCloud 공유앨범 */}

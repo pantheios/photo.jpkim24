@@ -19,6 +19,15 @@ model AlbumSource {
   createdAt  DateTime  @default(now())
 }
 
+// 맥 동기화 에이전트(osxphotos) 인증 토큰
+model IngestToken {
+  id         String    @id @default(cuid())
+  token      String    @unique
+  name       String // 예: "아빠 맥북"
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
+}
+
 // 가족 구성원
 model User {
   id           String   @id @default(cuid())
@@ -55,6 +64,8 @@ model Child {
   birthDate DateTime
   avatarUrl String?
   createdAt DateTime @default(now())
+
+  media MediaChild[]
 }
 
 // 사진 묶음 글 (한 글에 여러 장)
@@ -85,11 +96,25 @@ model Media {
   thumbPath String? // 썸네일 상대경로
   width      Int?
   height     Int?
-  order      Int      @default(0)
-  icloudGuid String?  @unique // iCloud 공유앨범 photoGuid (중복 임포트 방지)
-  createdAt  DateTime @default(now())
+  order      Int       @default(0)
+  takenAt    DateTime? // 개별 촬영시각 (게시물 내 정렬용)
+  externalId String?   @unique // 외부 시스템 ID — 사진 라이브러리 UUID / 공유앨범 photoGuid (중복 임포트 방지)
+  createdAt  DateTime  @default(now())
+
+  children MediaChild[]
 
   @@index([postId])
+}
+
+// 사진에 찍힌 아이 (osxphotos 인물 인식 기반) — 아이별 사진 필터링용
+model MediaChild {
+  mediaId String
+  media   Media  @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  childId String
+  child   Child  @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  @@id([mediaId, childId])
+  @@index([childId])
 }
 
 // 댓글

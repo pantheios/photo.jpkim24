@@ -62,6 +62,7 @@ export async function POST(req: NextRequest) {
           width: p.width,
           height: p.height,
           order: i,
+          takenAt: p.takenAt,
         })),
       },
     },

@@ -12,7 +12,7 @@ export default async function AdminPage() {
   if (!user) redirect("/login");
   if (user.role !== ROLES.ADMIN) redirect("/");
 
-  const child = await prisma.child.findFirst({ orderBy: { createdAt: "desc" } });
+  const children = await prisma.child.findMany({ orderBy: { birthDate: "asc" } });
 
   return (
     <>
@@ -28,11 +28,11 @@ export default async function AdminPage() {
 
       <main className="mx-auto max-w-xl px-4 py-5">
         <AdminPanel
-          initialChild={
-            child
-              ? { name: child.name, birthDate: child.birthDate.toISOString() }
-              : null
-          }
+          initialChildren={children.map((c) => ({
+            id: c.id,
+            name: c.name,
+            birthDate: c.birthDate.toISOString(),
+          }))}
         />
       </main>
     </>
