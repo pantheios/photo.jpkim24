@@ -12,6 +12,9 @@ export function AppHeader({ name, role }: { name: string; role: string }) {
         </Link>
         <nav className="flex items-center gap-4 text-sm">
           <span className="hidden text-muted sm:inline">{name}</span>
+          <Link href="/account" className="text-muted hover:text-ink">
+            내 계정
+          </Link>
           {role === ROLES.ADMIN && (
             <Link href="/admin" className="text-muted hover:text-ink">
               관리

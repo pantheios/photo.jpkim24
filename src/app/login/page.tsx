@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { DeviceRequestBox } from "@/components/DeviceRequestBox";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -83,6 +84,8 @@ export default function LoginPage() {
             {loading ? "로그인 중…" : "로그인"}
           </button>
         </form>
+
+        <DeviceRequestBox />
 
         <p className="mt-5 text-center text-sm text-muted">
           아직 계정이 없나요?{" "}

@@ -4,7 +4,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { reactionSummary } from "@/lib/posts";
 import { ageLabel } from "@/lib/age";
-import { formatDateTime } from "@/lib/format";
+import { formatDateTime, parsePhotoMeta } from "@/lib/format";
 import { ROLES } from "@/lib/constants";
 import { MediaGallery } from "@/components/MediaGallery";
 import { ReactionBar } from "@/components/ReactionBar";
@@ -82,6 +82,7 @@ export default async function PostDetailPage({
           <MediaGallery
             media={post.media.map((m) => ({
               ...m,
+              meta: parsePhotoMeta(m.meta),
               childIds: m.children.map((c) => c.childId),
             }))}
             editable={user.role === ROLES.ADMIN}

@@ -35,6 +35,20 @@ function parsePersons(raw: FormDataEntryValue | null): string[] {
   }
 }
 
+// 상세정보 JSON 문자열을 검증해 그대로 저장 (형식 오류면 null)
+function normalizeMeta(raw: FormDataEntryValue | null): string | null {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  try {
+    const obj = JSON.parse(raw);
+    if (obj && typeof obj === "object" && Object.keys(obj).length > 0) {
+      return JSON.stringify(obj);
+    }
+  } catch {
+    // 형식 오류 — 저장 안 함
+  }
+  return null;
+}
+
 export async function POST(req: NextRequest) {
   const auth = req.headers.get("authorization") || "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : null;
@@ -106,6 +120,7 @@ export async function POST(req: NextRequest) {
       order,
       takenAt,
       externalId: uuid,
+      meta: normalizeMeta(form.get("meta")),
     },
   });
 

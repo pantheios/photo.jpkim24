@@ -11,11 +11,18 @@ osxphotos로 특정 인물로 인식된 사진을 export한 뒤 서버 /api/inge
   "token": "<관리 페이지에서 발급한 토큰>",
   "persons": ["첫째이름", "둘째이름"],
   "include_videos": true,
-  "max_file_mb": 300
+  "max_file_mb": 300,
+  "delete_removed": true
 }
 
 max_file_mb는 서버의 INGEST_MAX_FILE_BYTES와 맞춘다 (기본 300).
 초과 파일은 업로드 시도 없이 건너뛰고 state에 기록한다.
+
+delete_removed(기본 true): 사진 앱/iCloud에서 완전히 삭제된 사진을 사진첩에서도
+제거한다. 라이브러리의 현재 인물(아이) UUID와 대조해 사라진 것만 지우며, 삭제 후보가
+사진첩의 30%를 넘으면(마운트 실패 등) 안전상 보류한다. 끄려면 false.
+(주의: 사진 앱에서 아이 얼굴 태그가 제거된 사진도 삭제 후보가 될 수 있다. 단 원본은
+Photos/iCloud에 그대로 남고, 다시 태그되면 재업로드된다.)
 
 (아이가 한 명이면 "persons": ["이름"] 또는 예전 형식 "person": "이름"도 동작.
 두 아이가 같이 나온 사진은 한 번만 올라간다 — UUID로 중복 제거.)
@@ -23,7 +30,10 @@ max_file_mb는 서버의 INGEST_MAX_FILE_BYTES와 맞춘다 (기본 300).
 필요: pipx install osxphotos  (또는 pip3 install osxphotos)
 """
 
+from __future__ import annotations  # 타입 표기 지연 평가 — 시스템 python 3.9에서도 'list | None' 동작
+
 import json
+import re
 import subprocess
 import sys
 import urllib.error
@@ -84,6 +94,15 @@ def append_state(photo_uuid: str) -> None:
         f.write(photo_uuid + "\n")
 
 
+def remove_from_state(uuids: list) -> None:
+    """삭제된 UUID를 state에서 제거 → 나중에 사진 앱에서 복원되면 재업로드된다."""
+    if not STATE_PATH.exists() or not uuids:
+        return
+    drop = set(uuids)
+    kept = sorted(u for u in load_state() if u not in drop)
+    STATE_PATH.write_text("\n".join(kept) + ("\n" if kept else ""))
+
+
 def export_new_photos(cfg: dict, export_dir: Path) -> list:
     """state에 없는 인물 사진을 export. 파일명 = <uuid>.<ext>
 
@@ -126,11 +145,30 @@ def photo_uuid_of(path: Path) -> str:
     return path.stem.split(" ")[0].removesuffix("_edited")
 
 
-def load_persons_by_uuid(export_dir: Path) -> dict:
-    """export 결과 DB(.osxphotos_export.db)에서 사진별 인물 목록을 읽는다.
+def _build_meta(info: dict) -> dict:
+    """photoinfo JSON → 서버에 저장할 상세정보(카메라·렌즈·촬영설정·위치)."""
+    exif = info.get("exif_info") or {}
+    place = info.get("place")
+    meta = {
+        "camera": exif.get("camera_model"),
+        "make": exif.get("camera_make"),
+        "lens": exif.get("lens_model"),
+        "aperture": exif.get("aperture"),
+        "focalLength": exif.get("focal_length"),
+        "iso": exif.get("iso"),
+        "shutter": exif.get("shutter_speed"),
+        "latitude": info.get("latitude"),
+        "longitude": info.get("longitude"),
+        "place": place.get("address_str") if isinstance(place, dict) else None,
+    }
+    return {k: v for k, v in meta.items() if v not in (None, "", [])}
 
-    서버가 인물 이름을 등록된 아이와 매칭해 아이별 태깅에 사용한다.
-    DB가 없거나 읽기 실패해도 동기화 자체는 계속된다(태깅만 생략)."""
+
+def load_photoinfo_by_uuid(export_dir: Path) -> dict:
+    """export 결과 DB(.osxphotos_export.db)에서 사진별 인물·상세정보를 읽는다.
+
+    인물은 등록된 아이와 매칭해 태깅에, 메타는 상세정보 표시에 쓰인다.
+    DB가 없거나 읽기 실패해도 동기화 자체는 계속된다(태깅/상세정보만 생략)."""
     import shutil
     import sqlite3
     import tempfile
@@ -145,23 +183,23 @@ def load_persons_by_uuid(export_dir: Path) -> dict:
             tmp_path = Path(tmp.name)
         shutil.copy2(src, tmp_path)
         con = sqlite3.connect(tmp_path)
-        for uid, info in con.execute("SELECT uuid, photoinfo FROM photoinfo"):
+        for uid, info_json in con.execute("SELECT uuid, photoinfo FROM photoinfo"):
             try:
-                persons = json.loads(info).get("persons") or []
+                info = json.loads(info_json)
+                persons = info.get("persons") or []
                 names = sorted({p for p in persons if p and p != "_UNKNOWN_"})
-                if names:
-                    result[uid] = names
+                result[uid] = {"persons": names, "meta": _build_meta(info)}
             except Exception:  # noqa: BLE001
                 continue
         con.close()
         tmp_path.unlink(missing_ok=True)
     except Exception as e:  # noqa: BLE001
-        log(f"인물 정보 로드 실패(태깅 생략): {e}")
+        log(f"사진 메타 로드 실패(태깅/상세정보 생략): {e}")
         return {}
     return result
 
 
-def upload(cfg: dict, path: Path, persons: list | None = None) -> dict:
+def upload(cfg: dict, path: Path, persons: list | None = None, meta: dict | None = None) -> dict:
     """multipart/form-data 업로드 (표준 라이브러리만 사용)"""
     photo_uuid = photo_uuid_of(path)
     is_video = path.suffix.lower() in VIDEO_EXTS
@@ -178,6 +216,8 @@ def upload(cfg: dict, path: Path, persons: list | None = None) -> dict:
     field("isVideo", "1" if is_video else "0")
     if persons:
         field("persons", json.dumps(persons, ensure_ascii=False))
+    if meta:
+        field("meta", json.dumps(meta, ensure_ascii=False))
     # --touch-file로 mtime = 촬영시각. EXIF가 없는 사진·동영상의 날짜 폴백으로 쓰인다.
     taken_at = datetime.fromtimestamp(path.stat().st_mtime).astimezone()
     field("takenAt", taken_at.isoformat())
@@ -205,6 +245,77 @@ def upload(cfg: dict, path: Path, persons: list | None = None) -> dict:
         return json.loads(res.read().decode())
 
 
+_UUID_RE = re.compile(r"^[0-9A-Fa-f-]{36}$")
+
+
+def load_live_uuids(persons: list) -> list:
+    """현재 라이브러리에서 해당 인물(아이)로 살아있는 사진 UUID (휴지통 제외).
+
+    사진첩에 올라온 것과 동일한 인물 범위로 조회한다. 여기 없는데 사진첩엔 있는
+    사진 = 삭제됐거나 인물 태그가 빠진 것 → 삭제 후보.
+    (전체 라이브러리 조회는 1.5GB DB 사본 생성으로 너무 느려 인물 범위로 한정.)
+
+    2필드를 주는 건 osxphotos 일부 버전에서 단일 --field 출력이 비는 문제를 피하려는 것.
+    Photos 앱이 라이브러리를 점유하면(얼굴 인식 등) 느려질 수 있어 타임아웃 시 빈 목록 반환."""
+    cmd = ["osxphotos", "query", "--field", "uuid", "{uuid}", "--field", "y", "{created.year}"]
+    for person in persons:
+        cmd += ["--person", person]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    except Exception as e:  # noqa: BLE001
+        log(f"라이브러리 UUID 조회 실패(삭제 반영 생략): {e}")
+        return []
+    if result.returncode != 0:
+        log("라이브러리 UUID 조회 실패(삭제 반영 생략)")
+        return []
+    uuids = []
+    for line in result.stdout.splitlines():
+        first = line.strip().split(",")[0].strip('"')
+        if _UUID_RE.match(first):
+            uuids.append(first)
+    return uuids
+
+
+def reconcile_deletions(cfg: dict) -> None:
+    """사진 앱/iCloud에서 삭제된 사진을 사진첩에서도 제거."""
+    if not cfg.get("delete_removed", True):
+        return
+    live = load_live_uuids(cfg["persons"])
+    if not live:
+        log("삭제 반영: 라이브러리 UUID 0개 — 안전상 건너뜀")
+        return
+
+    body = json.dumps({"liveUuids": live}).encode()
+    req = urllib.request.Request(
+        cfg["server_url"] + "/api/ingest/reconcile",
+        data=body,
+        headers={
+            "Authorization": f"Bearer {cfg['token']}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=180) as res:
+            data = json.loads(res.read().decode())
+    except Exception as e:  # noqa: BLE001
+        log(f"삭제 반영 요청 실패: {e}")
+        return
+
+    if data.get("aborted"):
+        log(
+            f"삭제 반영 보류: 삭제 후보 {data.get('wouldDelete')}/{data.get('album')}장이 "
+            "안전 한도(30%) 초과 — 라이브러리 상태 확인 필요. 정말 삭제하려면 수동 실행."
+        )
+        return
+    deleted = data.get("deleted") or []
+    if deleted:
+        remove_from_state(deleted)
+        log(f"삭제 반영: 사진첩에서 {len(deleted)}장 삭제 (게시물 {data.get('removedPosts', 0)}개 정리)")
+    else:
+        log("삭제 반영: 삭제할 사진 없음")
+
+
 def main() -> None:
     cfg = load_config()
     state = load_state()
@@ -212,12 +323,13 @@ def main() -> None:
 
     files = export_new_photos(cfg, cfg["export_dir"])
     if not files:
-        log("새 사진 없음. 종료.")
+        log("새 사진 없음.")
+        reconcile_deletions(cfg)  # 새 사진이 없어도 삭제는 반영
         return
 
-    persons_by_uuid = load_persons_by_uuid(cfg["export_dir"])
-    if persons_by_uuid:
-        log(f"인물 정보 확보: {len(persons_by_uuid)}장")
+    info_by_uuid = load_photoinfo_by_uuid(cfg["export_dir"])
+    if info_by_uuid:
+        log(f"인물·상세정보 확보: {len(info_by_uuid)}장")
 
     ok = dup = skip = fail = 0
     total = len(files)
@@ -237,7 +349,8 @@ def main() -> None:
             skip += 1
             continue
         try:
-            res = upload(cfg, f, persons_by_uuid.get(photo_uuid))
+            pinfo = info_by_uuid.get(photo_uuid) or {}
+            res = upload(cfg, f, pinfo.get("persons"), pinfo.get("meta"))
             if res.get("duplicate"):
                 dup += 1
             else:
@@ -264,6 +377,9 @@ def main() -> None:
             log(f"업로드 진행: {i}/{total} (성공 {ok}, 중복 {dup}, 건너뜀 {skip}, 실패 {fail})")
 
     log(f"완료: 업로드 {ok}장, 서버 중복 {dup}장, 용량 초과 건너뜀 {skip}장, 실패 {fail}장")
+
+    reconcile_deletions(cfg)  # 삭제된 사진 반영
+
     if fail:
         sys.exit(1)
 

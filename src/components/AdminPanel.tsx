@@ -23,6 +23,21 @@ type IngestTokenInfo = {
   createdAt: string;
 };
 
+type DeviceInfo = {
+  id: string;
+  name: string;
+  lastUsedAt: string | null;
+  createdAt: string;
+  user: { name: string };
+};
+
+type DeviceRequestInfo = {
+  id: string;
+  code: string;
+  device: string;
+  createdAt: string;
+};
+
 type ChildInfo = { id: string; name: string; birthDate: string };
 
 export function AdminPanel({
@@ -54,6 +69,17 @@ export function AdminPanel({
   const [tokenName, setTokenName] = useState("");
   const [tokenBusy, setTokenBusy] = useState(false);
 
+  // 기기 자동 로그인
+  const [devices, setDevices] = useState<DeviceInfo[]>([]);
+  const [members, setMembers] = useState<{ id: string; name: string }[]>([]);
+  const [deviceUserId, setDeviceUserId] = useState("");
+  const [deviceName, setDeviceName] = useState("");
+  const [newDevice, setNewDevice] = useState<{ name: string; url: string } | null>(null);
+  const [deviceBusy, setDeviceBusy] = useState(false);
+  const [deviceCopied, setDeviceCopied] = useState(false);
+  const [requests, setRequests] = useState<DeviceRequestInfo[]>([]);
+  const [approveUser, setApproveUser] = useState<Record<string, string>>({});
+
   useEffect(() => {
     fetch("/api/invites")
       .then((r) => r.json())
@@ -67,7 +93,94 @@ export function AdminPanel({
       .then((r) => r.json())
       .then((d) => setTokens(d.tokens ?? []))
       .catch(() => {});
+    fetch("/api/device-logins")
+      .then((r) => r.json())
+      .then((d) => {
+        setDevices(d.devices ?? []);
+        setMembers(d.users ?? []);
+        setRequests(d.requests ?? []);
+      })
+      .catch(() => {});
   }, []);
+
+  // 승인 대기 요청은 전화 통화하며 기다리는 경우가 많아 5초마다 새로고침
+  useEffect(() => {
+    const timer = setInterval(() => {
+      fetch("/api/device-logins")
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.requests) setRequests(d.requests);
+        })
+        .catch(() => {});
+    }, 5000);
+    return () => clearInterval(timer);
+  }, []);
+
+  async function loadDevices() {
+    const d = await fetch("/api/device-logins")
+      .then((r) => r.json())
+      .catch(() => ({}));
+    setDevices(d.devices ?? []);
+    setMembers(d.users ?? []);
+    setRequests(d.requests ?? []);
+  }
+
+  async function approveRequest(r: DeviceRequestInfo) {
+    const userId = approveUser[r.id];
+    if (!userId) return;
+    const member = members.find((m) => m.id === userId);
+    if (!confirm(`확인번호 ${r.code} 기기를 "${member?.name}" 계정으로 로그인시킬까요?`)) return;
+    const res = await fetch("/api/device-requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: r.id, userId }),
+    });
+    const data = await res.json();
+    if (!res.ok) alert(data.error ?? "승인에 실패했어요.");
+    await loadDevices();
+  }
+
+  async function rejectRequest(id: string) {
+    await fetch("/api/device-requests", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    setRequests((rs) => rs.filter((x) => x.id !== id));
+  }
+
+  async function createDevice(e: React.FormEvent) {
+    e.preventDefault();
+    setDeviceBusy(true);
+    try {
+      const res = await fetch("/api/device-logins", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: deviceUserId, name: deviceName }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setNewDevice({ name: data.device.name, url: data.device.url });
+        setDeviceCopied(false);
+        setDeviceName("");
+        await loadDevices();
+      } else {
+        alert(data.error ?? "발급에 실패했어요.");
+      }
+    } finally {
+      setDeviceBusy(false);
+    }
+  }
+
+  async function revokeDevice(id: string) {
+    if (!confirm("이 기기의 자동 로그인을 해제할까요?")) return;
+    await fetch("/api/device-logins", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    setDevices((d) => d.filter((x) => x.id !== id));
+  }
 
   async function createToken(e: React.FormEvent) {
     e.preventDefault();
@@ -397,6 +510,135 @@ export function AdminPanel({
         )}
 
         {icloudMsg && <p className="mt-3 text-sm text-muted">{icloudMsg}</p>}
+      </section>
+
+      {/* 기기 자동 로그인 */}
+      <section className="rounded-card bg-surface p-5 shadow-sm ring-1 ring-line">
+        <h2 className="mb-2 font-bold">📱 기기 자동 로그인</h2>
+        <p className="mb-3 text-sm text-muted">
+          비밀번호 입력이 어려운 가족용입니다. 로그인 화면에서 <b>“가족에게 들어가게 해달라고
+          요청하기”</b>를 누르면 아래에 확인번호와 함께 뜹니다 — 번호를 대조하고 계정을 골라
+          승인하세요. 한 번 승인된 기기는 로그인이 풀려도 자동으로 다시 로그인됩니다.
+        </p>
+
+        {requests.length > 0 && (
+          <div className="mb-4 space-y-2">
+            <div className="text-xs font-semibold text-primary">🔔 승인 대기</div>
+            {requests.map((r) => (
+              <div key={r.id} className="rounded-lg border-2 border-primary/50 bg-soft p-3">
+                <div className="mb-2 flex items-baseline justify-between">
+                  <span className="text-2xl font-bold tracking-widest">{r.code}</span>
+                  <span className="text-xs text-muted">
+                    {r.device} · {new Date(r.createdAt).toLocaleTimeString("ko-KR")}
+                  </span>
+                </div>
+                <div className="flex gap-2">
+                  <select
+                    value={approveUser[r.id] ?? ""}
+                    onChange={(e) => setApproveUser((m) => ({ ...m, [r.id]: e.target.value }))}
+                    className="min-w-0 flex-1 rounded-lg border border-line bg-white px-3 py-2 text-sm outline-none focus:border-primary"
+                  >
+                    <option value="">어느 계정으로?</option>
+                    {members.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => approveRequest(r)}
+                    disabled={!approveUser[r.id]}
+                    className="shrink-0 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                  >
+                    승인
+                  </button>
+                  <button
+                    onClick={() => rejectRequest(r.id)}
+                    className="shrink-0 px-1 text-xs text-muted hover:text-red-500"
+                  >
+                    거절
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="mb-1 text-xs font-semibold text-muted">또는 링크로 등록</div>
+
+        <form onSubmit={createDevice} className="mb-3 flex flex-wrap gap-2">
+          <select
+            value={deviceUserId}
+            onChange={(e) => setDeviceUserId(e.target.value)}
+            className="rounded-lg border border-line bg-white px-3 py-2 text-sm outline-none focus:border-primary"
+          >
+            <option value="">계정 선택</option>
+            {members.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+          <input
+            value={deviceName}
+            onChange={(e) => setDeviceName(e.target.value)}
+            placeholder="기기 이름 (예: 할머니 폰)"
+            className="min-w-0 flex-1 rounded-lg border border-line bg-white px-3 py-2 text-sm outline-none focus:border-primary"
+          />
+          <button
+            type="submit"
+            disabled={deviceBusy || !deviceUserId}
+            className="shrink-0 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+          >
+            링크 발급
+          </button>
+        </form>
+
+        {newDevice && (
+          <div className="mb-3 rounded-lg border border-primary/40 bg-soft p-3">
+            <div className="mb-1 text-xs font-semibold text-primary">
+              ⚠️ 지금만 표시됩니다 — {newDevice.name}에서 이 링크를 열어주세요. 링크를 아는
+              사람은 누구나 이 계정으로 들어올 수 있으니 해당 폰에만 보내세요.
+            </div>
+            <code className="block break-all text-xs">{newDevice.url}</code>
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(newDevice.url);
+                setDeviceCopied(true);
+              }}
+              className="mt-2 rounded border border-line px-2 py-1 text-xs"
+            >
+              {deviceCopied ? "복사됨 ✓" : "복사"}
+            </button>
+          </div>
+        )}
+
+        {devices.length > 0 && (
+          <ul className="space-y-1.5">
+            {devices.map((d) => (
+              <li
+                key={d.id}
+                className="flex items-center justify-between rounded-lg border border-line px-3 py-2 text-sm"
+              >
+                <div>
+                  <span className="font-medium">{d.name}</span>
+                  <span className="ml-1.5 text-xs text-muted">→ {d.user.name}</span>
+                  <div className="text-xs text-muted">
+                    {d.lastUsedAt
+                      ? `마지막 자동 로그인: ${new Date(d.lastUsedAt).toLocaleString("ko-KR")}`
+                      : "아직 링크를 열지 않음"}
+                  </div>
+                </div>
+                <button
+                  onClick={() => revokeDevice(d.id)}
+                  className="shrink-0 text-xs text-muted hover:text-red-500"
+                >
+                  해제
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       {/* 초대 */}

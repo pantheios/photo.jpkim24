@@ -3,6 +3,30 @@ export function mediaUrl(relPath: string): string {
   return "/media/" + relPath.split("/").map(encodeURIComponent).join("/");
 }
 
+// 사진 상세정보 (osxphotos에서 추출해 Media.meta에 JSON으로 저장)
+export type PhotoMeta = {
+  camera?: string;
+  make?: string;
+  lens?: string;
+  aperture?: number;
+  focalLength?: number;
+  iso?: number;
+  shutter?: number; // 초 단위
+  latitude?: number;
+  longitude?: number;
+  place?: string;
+};
+
+export function parsePhotoMeta(raw: string | null | undefined): PhotoMeta | null {
+  if (!raw) return null;
+  try {
+    const o = JSON.parse(raw);
+    return o && typeof o === "object" ? (o as PhotoMeta) : null;
+  } catch {
+    return null;
+  }
+}
+
 const KST = { timeZone: "Asia/Seoul" } as const;
 
 export function formatDate(d: Date | string): string {

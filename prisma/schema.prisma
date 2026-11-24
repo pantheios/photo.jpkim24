@@ -43,6 +43,19 @@ model User {
   reactions   Reaction[]
   invitesSent Invite[]  @relation("InviteCreator")
   inviteUsed  Invite?   @relation("InviteUser")
+  devices     DeviceLogin[]
+}
+
+// 기기 자동 로그인 — 관리자가 발급한 링크를 폰에서 한 번 열면 그 기기는 이 계정으로 계속 로그인됨
+// (비밀번호 입력이 어려운 가족용. 토큰은 기기 쿠키에 저장되고 세션 만료 시 자동 재발급)
+model DeviceLogin {
+  id         String    @id @default(cuid())
+  token      String    @unique
+  name       String // 예: "할머니 폰"
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
 }
 
 // 초대코드 — 관리자가 발급, 가입 시 1회 사용
@@ -55,6 +68,18 @@ model Invite {
   usedBy      User?     @relation("InviteUser", fields: [usedById], references: [id])
   expiresAt   DateTime?
   createdAt   DateTime  @default(now())
+}
+
+// 기기 로그인 요청 (페어링) — 로그인 화면에서 요청 → 관리자가 확인번호 보고 계정 지정·승인
+// 승인되면 같은 token으로 DeviceLogin이 만들어지고, 요청한 브라우저만(쿠키로) 그 토큰을 받아간다
+model DeviceRequest {
+  id        String   @id @default(cuid())
+  token     String   @unique // 요청한 브라우저의 대기 쿠키 값 = 승인 후 기기 토큰
+  code      String // 4자리 확인번호 (사람이 맞는 기기인지 대조용)
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
 }
 
 // 아기 프로필 — 생일 기준으로 "생후 N일" 자동 표시
@@ -99,6 +124,7 @@ model Media {
   order      Int       @default(0)
   takenAt    DateTime? // 개별 촬영시각 (게시물 내 정렬용)
   externalId String?   @unique // 외부 시스템 ID — 사진 라이브러리 UUID / 공유앨범 photoGuid (중복 임포트 방지)
+  meta       String?   // 상세정보 JSON (카메라·렌즈·촬영설정·위치 등; osxphotos에서 추출)
   createdAt  DateTime  @default(now())
 
   children MediaChild[]
